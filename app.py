@@ -20,7 +20,7 @@ def safe_format_date(date_series, format_str="%d-%m-%Y"):
     except:
         return date_series.astype(str)
 
-from src.database.db import init_db, insert_transactions, fetch_all, get_sweep_balance_adjustments, add_sweep_balance_adjustment, get_inter_person_transfers, get_account_balances, get_transfer_patterns, get_all_transfer_transactions, purge_all_data, get_transaction_count, check_duplicate_transactions
+from src.database.db import init_db, insert_transactions, fetch_all, get_sweep_balance_adjustments, add_sweep_balance_adjustment, get_inter_person_transfers, get_account_balances, get_transfer_patterns, get_all_transfer_transactions, purge_all_data, get_transaction_count, check_duplicate_transactions, update_categories_for_existing_transactions, get_category_summary, get_monthly_category_trends
 from src.utils.parser import parse_csv, validate_data_integrity
 from src.utils.indian_formatting import format_indian_currency, format_indian_number
 
@@ -106,6 +106,13 @@ with st.sidebar:
                 st.warning("⚠️ Click again to confirm data purge")
                 st.rerun()
     
+    # Auto-categorization
+    st.subheader("🏷️ Auto-Categorization")
+    if st.button("🔄 Update Categories", help="Auto-categorize all transactions"):
+        with st.spinner("Categorizing transactions..."):
+            updated_count = update_categories_for_existing_transactions()
+            st.success(f"✅ Updated categories for {updated_count} transactions!")
+    
     # Sweep balance adjustments
     st.subheader("⚖️ Sweep Balance Adjustments")
     with st.expander("Add Adjustment"):
@@ -119,7 +126,7 @@ with st.sidebar:
             st.experimental_rerun()
 
 # Create tabs for different views
-tab1, tab2, tab3, tab4 = st.tabs(["📊 Dashboard", "🔄 Transfers", "💼 Accounts", "📋 Data Quality"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Dashboard", "🔄 Transfers", "💼 Accounts", "📈 Categories", "📋 Data Quality"])
 
 # Fetch all transactions
 df = fetch_all()
@@ -601,7 +608,193 @@ if df is not None and not df.empty:
             account_display["Last Transaction"] = safe_format_date(account_summary["Last Transaction"])
             
             st.dataframe(account_display, width='stretch')    # Tab 4: Data Quality
+    # Tab 4: Categories  
     with tab4:
+        st.header("📈 Spending Categories Analysis")
+        st.write("Auto-categorized transaction analysis based on description keywords")
+        
+        # Get category data
+        category_summary = get_category_summary()
+        monthly_trends = get_monthly_category_trends()
+        
+        if category_summary is not None and not category_summary.empty:
+            # Summary metrics
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                total_categories = len(category_summary)
+                st.metric("Total Categories", total_categories)
+            
+            with col2:
+                total_debits = category_summary['total_debits'].sum()
+                st.metric("Total Spending", format_indian_currency(total_debits))
+            
+            with col3:
+                avg_per_category = category_summary['total_debits'].mean()
+                st.metric("Avg per Category", format_indian_currency(avg_per_category))
+            
+            with col4:
+                top_category = category_summary.iloc[0]['category'] if len(category_summary) > 0 else "N/A"
+                st.metric("Top Spending Category", top_category)
+            
+            # Category breakdown chart
+            st.subheader("💰 Spending by Category")
+            
+            # Create pie chart for spending distribution
+            if len(category_summary) > 0:
+                fig_pie = px.pie(
+                    category_summary, 
+                    values='total_debits', 
+                    names='category',
+                    title="Spending Distribution by Category",
+                    hover_data=['transaction_count']
+                )
+                fig_pie.update_traces(
+                    textposition='inside', 
+                    textinfo='percent+label',
+                    hovertemplate='<b>%{label}</b><br>Amount: ₹%{value:,.0f}<br>Transactions: %{customdata[0]}<extra></extra>'
+                )
+                st.plotly_chart(fig_pie, use_container_width=True)
+            
+            # Category details table
+            st.subheader("📊 Detailed Category Breakdown")
+            
+            # Format the summary for display
+            display_summary = category_summary.copy()
+            display_summary['total_debits'] = display_summary['total_debits'].apply(format_indian_currency)
+            display_summary['total_credits'] = display_summary['total_credits'].apply(format_indian_currency)
+            display_summary['net_amount'] = display_summary['net_amount'].apply(format_indian_currency)
+            display_summary['avg_debit'] = display_summary['avg_debit'].apply(lambda x: format_indian_currency(x) if pd.notna(x) else "₹0.00")
+            display_summary['avg_credit'] = display_summary['avg_credit'].apply(lambda x: format_indian_currency(x) if pd.notna(x) else "₹0.00")
+            
+            st.dataframe(
+                display_summary,
+                column_config={
+                    'category': 'Category',
+                    'transaction_count': 'Transactions',
+                    'total_debits': 'Total Spent',
+                    'total_credits': 'Total Received',
+                    'net_amount': 'Net Amount',
+                    'avg_debit': 'Avg Spent',
+                    'avg_credit': 'Avg Received'
+                },
+                width='stretch',
+                hide_index=True
+            )
+            
+            # Monthly trends
+            if monthly_trends is not None and not monthly_trends.empty:
+                st.subheader("📈 Monthly Category Trends")
+                
+                # Create a bar chart for monthly trends
+                fig_trends = px.bar(
+                    monthly_trends, 
+                    x='month', 
+                    y='total_debits',
+                    color='category',
+                    title="Monthly Spending by Category",
+                    labels={'total_debits': 'Amount Spent (₹)', 'month': 'Month'}
+                )
+                fig_trends.update_layout(xaxis_title="Month", yaxis_title="Amount Spent (₹)")
+                st.plotly_chart(fig_trends, use_container_width=True)
+                
+                # Monthly trends table
+                with st.expander("View Monthly Trends Data"):
+                    trends_display = monthly_trends.copy()
+                    trends_display['total_debits'] = trends_display['total_debits'].apply(format_indian_currency)
+                    trends_display['total_credits'] = trends_display['total_credits'].apply(format_indian_currency)
+                    st.dataframe(trends_display, width='stretch', hide_index=True)
+            
+            # Individual category view
+            st.subheader("🔍 View Expenses by Category")
+            
+            # Category selector
+            available_categories = category_summary['category'].tolist() if not category_summary.empty else []
+            if available_categories:
+                selected_category = st.selectbox(
+                    "Select a category to view detailed expenses:",
+                    available_categories,
+                    index=0
+                )
+                
+                if selected_category:
+                    # Get transactions for the selected category
+                    category_transactions = df[df['category'] == selected_category].copy()
+                    
+                    if not category_transactions.empty:
+                        # Show category summary
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            total_spent = category_transactions['debit'].sum()
+                            st.metric("Total Spent", format_indian_currency(total_spent))
+                        with col2:
+                            transaction_count = len(category_transactions)
+                            st.metric("Transactions", transaction_count)
+                        with col3:
+                            avg_amount = category_transactions['debit'].mean()
+                            st.metric("Average Amount", format_indian_currency(avg_amount))
+                        
+                        # Show transactions table
+                        st.write(f"**All transactions in {selected_category} category:**")
+                        
+                        # Format the transactions for display
+                        display_transactions = category_transactions[['date', 'description', 'debit', 'credit', 'balance', 'owner', 'bank']].copy()
+                        display_transactions['date'] = display_transactions['date'].dt.strftime('%d-%m-%Y')
+                        display_transactions['debit'] = display_transactions['debit'].apply(lambda x: format_indian_currency(x) if pd.notna(x) and x > 0 else "")
+                        display_transactions['credit'] = display_transactions['credit'].apply(lambda x: format_indian_currency(x) if pd.notna(x) and x > 0 else "")
+                        display_transactions['balance'] = display_transactions['balance'].apply(format_indian_currency)
+                        
+                        st.dataframe(
+                            display_transactions,
+                            column_config={
+                                'date': 'Date',
+                                'description': 'Description',
+                                'debit': 'Debit',
+                                'credit': 'Credit',
+                                'balance': 'Balance',
+                                'owner': 'Owner',
+                                'bank': 'Bank'
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
+                        
+                        # Monthly spending pattern for selected category
+                        if len(category_transactions) > 1:
+                            st.write(f"**Monthly spending pattern for {selected_category}:**")
+                            monthly_spending = category_transactions.groupby(category_transactions['date'].dt.to_period('M'))['debit'].sum().reset_index()
+                            monthly_spending['date'] = monthly_spending['date'].astype(str)
+                            
+                            fig_monthly = px.line(
+                                monthly_spending,
+                                x='date',
+                                y='debit',
+                                title=f"Monthly Spending Trend - {selected_category}",
+                                labels={'debit': 'Amount Spent (₹)', 'date': 'Month'}
+                            )
+                            st.plotly_chart(fig_monthly, use_container_width=True)
+                    else:
+                        st.info(f"No transactions found for {selected_category} category.")
+        
+        else:
+            st.info("No categorized transactions found. Click '🔄 Update Categories' in the sidebar to categorize your transactions.")
+            
+            # Show some sample categories
+            st.subheader("📋 Available Categories")
+            sample_categories = [
+                "🍽️ Food & Dining", "🚗 Transportation", "🛒 Shopping", 
+                "💡 Utilities & Bills", "🏥 Healthcare", "🎬 Entertainment",
+                "📚 Education", "🏦 Banking & Finance", "💰 Cash Withdrawal",
+                "🔄 Transfers", "💼 Salary & Income", "📦 Other"
+            ]
+            
+            cols = st.columns(3)
+            for i, category in enumerate(sample_categories):
+                with cols[i % 3]:
+                    st.write(f"• {category}")
+
+    # Tab 5: Data Quality
+    with tab5:
         st.subheader("📋 Data Quality & Integrity")
         
         # Data validation

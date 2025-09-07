@@ -1,7 +1,82 @@
 import sqlite3
 import pandas as pd
+import re
 
 DB_NAME = "finance.db"
+
+def categorize_transaction(description):
+    """Auto-categorize transactions based on description keywords"""
+    if not description:
+        return 'Other'
+    
+    description_upper = description.upper()
+    
+    # Define category keywords (most specific first)
+    categories = {
+        'Food & Dining': [
+            'SWIGGY', 'ZOMATO', 'DOMINOS', 'PIZZA', 'RESTAURANT', 'CAFE', 'COFFEE',
+            'MCDONALD', 'KFC', 'BURGER', 'FOOD', 'DINING', 'EATERY', 'CANTEEN',
+            'MESS', 'TIFFIN', 'SNACKS', 'BAKERY', 'SWEET', 'JUICE'
+        ],
+        'Transportation': [
+            'UBER', 'OLA', 'METRO', 'PETROL', 'DIESEL', 'FUEL', 'BUS', 'TRAIN',
+            'TAXI', 'AUTO', 'TRANSPORT', 'PARKING', 'TOLL', 'FASTAG',
+            'RAILWAY', 'IRCTC', 'FLIGHT', 'AIRLINE', 'AIRPORT'
+        ],
+        'Shopping': [
+            'AMAZON', 'FLIPKART', 'MYNTRA', 'AJIO', 'MALL', 'STORE', 'SHOP',
+            'PURCHASE', 'RETAIL', 'CLOTHING', 'ELECTRONICS', 'MOBILE',
+            'LAPTOP', 'GROCERY', 'SUPERMARKET', 'HYPERMARKET', 'RELIANCE'
+        ],
+        'Utilities & Bills': [
+            'ELECTRICITY', 'WATER', 'GAS', 'INTERNET', 'BROADBAND', 'WIFI',
+            'MOBILE RECHARGE', 'DTH', 'CABLE', 'PHONE', 'TELECOM', 'AIRTEL',
+            'JIO', 'VI', 'BSNL', 'BILL PAYMENT', 'UTILITY'
+        ],
+        'Healthcare': [
+            'HOSPITAL', 'PHARMACY', 'DOCTOR', 'MEDICAL', 'CLINIC', 'MEDICINE',
+            'HEALTH', 'INSURANCE', 'APOLLO', 'FORTIS', 'MAX', 'AIIMS'
+        ],
+        'Entertainment': [
+            'MOVIE', 'CINEMA', 'NETFLIX', 'AMAZON PRIME', 'SPOTIFY', 'HOTSTAR',
+            'YOUTUBE', 'GAME', 'ENTERTAINMENT', 'THEATRE', 'CONCERT', 'EVENT'
+        ],
+        'Education': [
+            'SCHOOL', 'COLLEGE', 'UNIVERSITY', 'COURSE', 'TRAINING', 'EDUCATION',
+            'FEES', 'TUITION', 'BOOK', 'LIBRARY', 'COACHING', 'INSTITUTE'
+        ],
+        'Banking & Finance': [
+            'BANK CHARGES', 'ATM', 'INTEREST', 'LOAN', 'EMI', 'CREDIT CARD',
+            'FINANCE', 'INVESTMENT', 'MUTUAL FUND', 'SIP', 'INSURANCE',
+            'PREMIUM', 'POLICY'
+        ],
+        'Cash Withdrawal': [
+            'ATM WDL', 'CASH WITHDRAWAL', 'ATM CASH', 'WITHDRAWAL', 'CASH'
+        ],
+        'Transfers': [
+            'TRANSFER', 'UPI', 'IMPS', 'NEFT', 'RTGS', 'FUND TRANSFER',
+            'MONEY TRANSFER', 'PAYTM', 'GPAY', 'PHONEPE', 'BHIM'
+        ],
+        'Salary & Income': [
+            'SALARY', 'INCOME', 'CREDIT INTEREST', 'DIVIDEND', 'BONUS',
+            'REFUND', 'CASHBACK', 'REWARD'
+        ]
+    }
+    
+    # Check each category
+    for category, keywords in categories.items():
+        if any(keyword in description_upper for keyword in keywords):
+            return category
+    
+    # Special patterns for common Indian banking terms
+    if re.search(r'TO\s+TRANSFER|BY\s+TRANSFER', description_upper):
+        return 'Transfers'
+    if re.search(r'CHARGES|FEE', description_upper):
+        return 'Banking & Finance'
+    if re.search(r'CREDIT\s+CARD|CC\s+PAYMENT', description_upper):
+        return 'Banking & Finance'
+    
+    return 'Other'
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -17,9 +92,16 @@ def init_db():
             description TEXT,
             debit REAL,
             credit REAL,
-            balance REAL
+            balance REAL,
+            category TEXT
         )
     """)
+    
+    # Add category column if it doesn't exist (for existing databases)
+    try:
+        c.execute("ALTER TABLE transactions ADD COLUMN category TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
     
     # Create sweep balance adjustments table
     c.execute("""
@@ -39,10 +121,22 @@ def init_db():
 def insert_transactions(transactions):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
+    
+    # Add category to each transaction
+    enhanced_transactions = []
+    for transaction in transactions:
+        # transaction is a tuple: (date, owner, bank, description, debit, credit, balance)
+        if len(transaction) == 7:  # Original format
+            date, owner, bank, description, debit, credit, balance = transaction
+            category = categorize_transaction(description)
+            enhanced_transactions.append((date, owner, bank, description, debit, credit, balance, category))
+        else:  # Already has category
+            enhanced_transactions.append(transaction)
+    
     c.executemany("""
-        INSERT INTO transactions (date, owner, bank, description, debit, credit, balance)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, transactions)
+        INSERT INTO transactions (date, owner, bank, description, debit, credit, balance, category)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, enhanced_transactions)
     conn.commit()
     conn.close()
 
@@ -362,5 +456,71 @@ def check_duplicate_transactions(records):
                 duplicates += 1
         
         return duplicates
+    finally:
+        conn.close()
+
+
+def update_categories_for_existing_transactions():
+    """Update categories for existing transactions that don't have categories"""
+    conn = sqlite3.connect(DB_NAME)
+    try:
+        cursor = conn.cursor()
+        
+        # Get transactions without categories
+        cursor.execute("SELECT id, description FROM transactions WHERE category IS NULL OR category = ''")
+        transactions = cursor.fetchall()
+        
+        updated_count = 0
+        for transaction_id, description in transactions:
+            category = categorize_transaction(description)
+            cursor.execute("UPDATE transactions SET category = ? WHERE id = ?", (category, transaction_id))
+            updated_count += 1
+        
+        conn.commit()
+        return updated_count
+    finally:
+        conn.close()
+
+
+def get_category_summary():
+    """Get spending summary by category"""
+    conn = sqlite3.connect(DB_NAME)
+    try:
+        df = pd.read_sql_query("""
+            SELECT 
+                category,
+                COUNT(*) as transaction_count,
+                SUM(debit) as total_debits,
+                SUM(credit) as total_credits,
+                SUM(credit) - SUM(debit) as net_amount,
+                AVG(CASE WHEN debit > 0 THEN debit END) as avg_debit,
+                AVG(CASE WHEN credit > 0 THEN credit END) as avg_credit
+            FROM transactions 
+            WHERE category IS NOT NULL AND category != ''
+            GROUP BY category
+            ORDER BY total_debits DESC
+        """, conn)
+        return df
+    finally:
+        conn.close()
+
+
+def get_monthly_category_trends():
+    """Get monthly spending trends by category"""
+    conn = sqlite3.connect(DB_NAME)
+    try:
+        df = pd.read_sql_query("""
+            SELECT 
+                strftime('%Y-%m', date) as month,
+                category,
+                SUM(debit) as total_debits,
+                SUM(credit) as total_credits,
+                COUNT(*) as transaction_count
+            FROM transactions 
+            WHERE category IS NOT NULL AND category != ''
+            GROUP BY strftime('%Y-%m', date), category
+            ORDER BY month DESC, total_debits DESC
+        """, conn)
+        return df
     finally:
         conn.close()
