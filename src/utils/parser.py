@@ -152,7 +152,8 @@ def process_sweep_transactions(df, mod_balance):
                 balance_adjustment = 0.0  # Reset after applying
     
     # Remove sweep transactions - fix the boolean logic
-    df_processed = df_processed[df_processed.get('remove', False) != True]
+    if 'remove' in df_processed.columns:
+        df_processed = df_processed[df_processed['remove'] != True]
     
     # Drop temporary columns
     df_processed = df_processed.drop(columns=['is_sweep', 'remove'], errors='ignore')
