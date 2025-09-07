@@ -138,6 +138,7 @@ finance.db
 
 # Personal financial CSV data files (YOUR ACTUAL BANK DATA)
 data/*.csv
+data/*.xls
 
 # Environment and config files
 .env

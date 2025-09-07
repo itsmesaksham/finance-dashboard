@@ -20,22 +20,30 @@ def safe_float(value):
     except (ValueError, TypeError):
         return 0.0
 
-def parse_date(date_str):
-    """Parse date string in various formats"""
+def parse_date(date_str, bank=None):
+    """Parse date string in various formats with bank-specific handling"""
     if pd.isna(date_str) or date_str == "":
         return ""
     
     date_str = str(date_str).strip()
     
-    # Common date formats
-    date_formats = [
-        "%d-%b-%y",    # 05-Apr-22
-        "%d-%m-%Y",    # 05-04-2022
-        "%d/%m/%Y",    # 05/04/2022
-        "%Y-%m-%d",    # 2022-04-05
-        "%d-%m-%y",    # 05-04-22
-        "%d/%m/%y",    # 05/04/22
-    ]
+    # Bank-specific date formats
+    if bank and bank.upper() == "SBI":
+        # SBI uses DD-MMM-YY format (e.g., 26-Apr-23)
+        date_formats = ["%d-%b-%y"]
+    elif bank and bank.upper() == "HDFC":
+        # HDFC uses DD/MM/YY format (e.g., 01/04/23)
+        date_formats = ["%d/%m/%y"]
+    else:
+        # Common date formats for other banks
+        date_formats = [
+            "%d-%b-%y",    # 05-Apr-22
+            "%d-%m-%Y",    # 05-04-2022
+            "%d/%m/%Y",    # 05/04/2022
+            "%Y-%m-%d",    # 2022-04-05
+            "%d-%m-%y",    # 05-04-22
+            "%d/%m/%y",    # 05/04/22
+        ]
     
     for fmt in date_formats:
         try:
@@ -72,6 +80,85 @@ def clean_description(description):
     
     return description
 
+def extract_mod_balance(file_path):
+    """Extract MOD balance from SBI CSV file header"""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f):
+                if line_num > 20:  # Stop after header section
+                    break
+                if 'MOD Balance' in line:
+                    # Extract the balance value from the line using regex
+                    # Format: MOD Balance      :,"11,21,000.00",,,,,
+                    import re
+                    match = re.search(r'"([0-9,]+\.?[0-9]*)"', line)
+                    if match:
+                        balance_str = match.group(1)
+                        # Handle Indian number format: "11,21,000.00" -> 1121000.00
+                        return safe_float(balance_str)
+    except Exception as e:
+        print(f"Error extracting MOD balance from {file_path}: {e}")
+    return 0.0
+
+def is_sweep_transaction(description):
+    """Check if a transaction is a sweep transaction"""
+    if pd.isna(description):
+        return False
+    
+    description_upper = description.upper()
+    sweep_keywords = [
+        'DEBIT SWEEP',
+        'TRANSFER CREDIT-',
+        'SWEEP TO',
+        'SWEEP FROM'
+    ]
+    
+    return any(keyword in description_upper for keyword in sweep_keywords)
+
+def process_sweep_transactions(df, mod_balance):
+    """Process sweep transactions by removing them and adjusting subsequent balances"""
+    if df.empty or 'is_sweep' not in df.columns:
+        return df
+    
+    # Create a copy to avoid modifying original
+    df_processed = df.copy()
+    
+    # Track sweep balance changes
+    sweep_balance = mod_balance
+    balance_adjustment = 0.0
+    
+    # Process each transaction
+    for idx, row in df_processed.iterrows():
+        if row['is_sweep']:
+            # Calculate sweep amount
+            sweep_amount = row['debit'] if row['debit'] > 0 else row['credit']
+            
+            # Update sweep balance
+            if 'DEBIT SWEEP' in row['description'].upper():
+                # Money going to sweep account
+                sweep_balance += sweep_amount
+                balance_adjustment -= sweep_amount
+            elif 'TRANSFER CREDIT-SWEEP' in row['description'].upper():
+                # Money coming from sweep account
+                sweep_balance -= sweep_amount
+                balance_adjustment += sweep_amount
+            
+            # Mark for removal
+            df_processed.loc[idx, 'remove'] = True
+        else:
+            # Apply accumulated balance adjustment to non-sweep transactions
+            if balance_adjustment != 0:
+                df_processed.loc[idx, 'balance'] += balance_adjustment
+                balance_adjustment = 0.0  # Reset after applying
+    
+    # Remove sweep transactions - fix the boolean logic
+    df_processed = df_processed[df_processed.get('remove', False) != True]
+    
+    # Drop temporary columns
+    df_processed = df_processed.drop(columns=['is_sweep', 'remove'], errors='ignore')
+    
+    return df_processed
+
 def parse_csv(file_path):
     """Enhanced CSV parser for various bank statement formats"""
     try:
@@ -85,47 +172,77 @@ def parse_csv(file_path):
         else:
             owner = name_parts[0]
             bank = "Unknown"
+        
+        # Extract MOD balance for SBI (sweep account balance)
+        mod_balance = 0.0
+        if bank.upper() == "SBI":
+            mod_balance = extract_mod_balance(file_path)
+            # Store sweep balance in database
+            from src.database.db import update_sweep_balance
+            statement_date = os.path.splitext(os.path.basename(file_path))[0].split("_")[-1]  # Extract year from filename
+            update_sweep_balance(owner, bank, statement_date, mod_balance)
 
-        # Try different encodings
+        # Try different encodings and handle bank-specific row skipping
         encodings = ['utf-8', 'latin1', 'cp1252']
         df = None
         
+        # Determine skip rows based on bank
+        skip_rows = 20 if bank.upper() in ["SBI", "HDFC"] else 0
+        
         for encoding in encodings:
             try:
-                df = pd.read_csv(file_path, encoding=encoding)
+                df = pd.read_csv(file_path, encoding=encoding, skiprows=skip_rows)
                 break
             except UnicodeDecodeError:
                 continue
         
         if df is None:
             raise ValueError(f"Could not read file {file_path} with any encoding")
-
+        
         # Lowercase + strip spaces for easier matching
         df.columns = df.columns.str.strip().str.lower()
 
-        # Enhanced column mapping for different bank formats
-        col_map = {
-            "date": [
-                "date", "txn date", "transaction date", "value date", 
-                "posting date", "effective date", "trans date"
-            ],
-            "description": [
-                "description", "narration", "remarks", "transaction details",
-                "particulars", "transaction description", "details"
-            ],
-            "debit": [
-                "debit", "withdrawal amt.", "withdrawal amount", "debit amount",
-                "dr amount", "withdrawal", "paid out", "debit amt"
-            ],
-            "credit": [
-                "credit", "deposit amt.", "deposit amount", "credit amount",
-                "cr amount", "deposit", "paid in", "credit amt"
-            ],
-            "balance": [
-                "balance", "balance amt.", "available balance", "closing balance",
-                "running balance", "bal amount", "balance amount"
-            ]
-        }
+        # Bank-specific column mapping
+        if bank.upper() == "SBI":
+            col_map = {
+                "date": ["txn date"],
+                "description": ["description"],
+                "debit": ["debit"],
+                "credit": ["credit"],
+                "balance": ["balance"]
+            }
+        elif bank.upper() == "HDFC":
+            col_map = {
+                "date": ["date"],
+                "description": ["narration"],
+                "debit": ["withdrawal amt."],
+                "credit": ["deposit amt."],
+                "balance": ["closing balance"]
+            }
+        else:
+            # Generic column mapping for other banks
+            col_map = {
+                "date": [
+                    "date", "txn date", "transaction date", "value date", 
+                    "posting date", "effective date", "trans date"
+                ],
+                "description": [
+                    "description", "narration", "remarks", "transaction details",
+                    "particulars", "transaction description", "details"
+                ],
+                "debit": [
+                    "debit", "withdrawal amt.", "withdrawal amount", "debit amount",
+                    "dr amount", "withdrawal", "paid out", "debit amt"
+                ],
+                "credit": [
+                    "credit", "deposit amt.", "deposit amount", "credit amount",
+                    "cr amount", "deposit", "paid in", "credit amt"
+                ],
+                "balance": [
+                    "balance", "balance amt.", "available balance", "closing balance",
+                    "running balance", "bal amount", "balance amount"
+                ]
+            }
 
         # Find and map columns
         std_cols = {}
@@ -146,17 +263,23 @@ def parse_csv(file_path):
 
         # Clean and process data
         if "date" in df.columns:
-            df["date"] = df["date"].apply(parse_date)
+            df["date"] = df["date"].apply(lambda x: parse_date(x, bank))
         
         if "description" in df.columns:
             df["description"] = df["description"].apply(clean_description)
             # Add transfer flag
             df["is_transfer"] = df["description"].apply(detect_inter_person_transfer)
+            # Add sweep flag
+            df["is_sweep"] = df["description"].apply(is_sweep_transaction)
 
         # Convert numeric columns
         for col in ["debit", "credit", "balance"]:
             if col in df.columns:
                 df[col] = df[col].apply(safe_float)
+        
+        # Handle sweep transactions for SBI
+        if bank.upper() == "SBI" and "is_sweep" in df.columns:
+            df = process_sweep_transactions(df, mod_balance)
 
         # Remove rows with invalid or missing essential data
         df = df.dropna(subset=["date"])
@@ -169,14 +292,14 @@ def parse_csv(file_path):
             df = df.dropna(subset=["date"])  # Remove invalid dates
             df = df.sort_values("date")
             df["date"] = df["date"].dt.strftime("%d-%m-%Y")
-        except:
+        except Exception:
             try:
                 # Fallback to more flexible parsing
                 df["date"] = pd.to_datetime(df["date"], dayfirst=True, errors='coerce')
                 df = df.dropna(subset=["date"])
                 df = df.sort_values("date")
                 df["date"] = df["date"].dt.strftime("%d-%m-%Y")
-            except:
+            except Exception:
                 # If all else fails, keep original format
                 pass
 

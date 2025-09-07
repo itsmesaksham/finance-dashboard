@@ -20,7 +20,7 @@ def safe_format_date(date_series, format_str="%d-%m-%Y"):
     except:
         return date_series.astype(str)
 
-from src.database.db import init_db, insert_transactions, fetch_all, get_sweep_balance_adjustments, add_sweep_balance_adjustment, get_inter_person_transfers, get_account_balances, get_transfer_patterns, get_all_transfer_transactions, purge_all_data, get_transaction_count, check_duplicate_transactions, update_categories_for_existing_transactions, get_category_summary, get_monthly_category_trends
+from src.database.db import init_db, insert_transactions, fetch_all, get_sweep_balance_adjustments, add_sweep_balance_adjustment, get_inter_person_transfers, get_account_balances, get_transfer_patterns, get_all_transfer_transactions, purge_all_data, get_transaction_count, check_duplicate_transactions, update_categories_for_existing_transactions, get_category_summary, get_monthly_category_trends, update_sweep_balance, get_latest_sweep_balance, get_sweep_balance_history
 from src.utils.parser import parse_csv, validate_data_integrity
 from src.utils.indian_formatting import format_indian_currency, format_indian_number
 
@@ -480,7 +480,11 @@ if df is not None and not df.empty:
                 transfers_display["debit"] = transfers_display["debit"].apply(lambda x: format_indian_currency(x) if x > 0 else "")
                 transfers_display["credit"] = transfers_display["credit"].apply(lambda x: format_indian_currency(x) if x > 0 else "")
                 transfers_display["balance"] = transfers_display["balance"].apply(lambda x: format_indian_currency(x))
-                transfers_display["date"] = safe_format_date(transfers_display["date"])
+                
+                # Convert dates to datetime for proper sorting, then format for display
+                transfers_display["date"] = pd.to_datetime(transfers_display["date"], format="%d-%m-%Y", errors='coerce')
+                transfers_display = transfers_display.sort_values("date", ascending=False)
+                transfers_display["date"] = transfers_display["date"].dt.strftime("%d-%m-%Y")
                 
                 # Filter by transfer method
                 selected_methods = st.multiselect(
@@ -514,7 +518,11 @@ if df is not None and not df.empty:
                 # Format transfers for display
                 transfers_display = transfers.copy()
                 transfers_display["amount"] = transfers_display["amount"].apply(lambda x: format_indian_currency(x))
-                transfers_display["date"] = safe_format_date(transfers_display["date"])
+                
+                # Convert dates to datetime for proper sorting, then format for display
+                transfers_display["date"] = pd.to_datetime(transfers_display["date"], format="%d-%m-%Y", errors='coerce')
+                transfers_display = transfers_display.sort_values("date", ascending=False)
+                transfers_display["date"] = transfers_display["date"].dt.strftime("%d-%m-%Y")
                 
                 st.dataframe(transfers_display, width='stretch', hide_index=True)
                 
@@ -571,7 +579,12 @@ if df is not None and not df.empty:
                 st.write("**Current Account Balances**")
                 balance_display = account_balances.copy()
                 balance_display["balance"] = balance_display["balance"].apply(lambda x: format_indian_currency(x))
-                balance_display["date"] = safe_format_date(balance_display["date"])
+                
+                # Convert dates to datetime for proper sorting, then format for display
+                balance_display["date"] = pd.to_datetime(balance_display["date"], format="%d-%m-%Y", errors='coerce')
+                balance_display = balance_display.sort_values("date", ascending=False)
+                balance_display["date"] = balance_display["date"].dt.strftime("%d-%m-%Y")
+                
                 st.dataframe(balance_display, width='stretch', hide_index=True)
             
             with col2:
@@ -613,9 +626,72 @@ if df is not None and not df.empty:
         st.header("📈 Spending Categories Analysis")
         st.write("Auto-categorized transaction analysis based on description keywords")
         
-        # Get category data
-        category_summary = get_category_summary()
-        monthly_trends = get_monthly_category_trends()
+        # Show filter info
+        if selected_accounts:
+            selected_account_names = ", ".join(selected_accounts)
+            st.info(f"📊 **Filtered View**: Showing data for: {selected_account_names}")
+        else:
+            st.info("📊 **All Accounts**: No filters applied - showing all bank accounts")
+        
+        # Helper function to calculate category summary from filtered data
+        def calculate_category_summary_from_df(df_filtered):
+            if df_filtered.empty or 'category' not in df_filtered.columns:
+                return None
+            
+            # Filter out rows where category is None or empty
+            categorized_df = df_filtered[df_filtered['category'].notna() & (df_filtered['category'] != '')]
+            
+            if categorized_df.empty:
+                return None
+            
+            summary = categorized_df.groupby('category').agg({
+                'debit': ['sum', 'mean', 'count'],
+                'credit': ['sum', 'mean'],
+                'id': 'count'
+            }).reset_index()
+            
+            # Flatten column names
+            summary.columns = ['category', 'total_debits', 'avg_debit', 'debit_count', 'total_credits', 'avg_credit', 'transaction_count']
+            
+            # Calculate net amount
+            summary['net_amount'] = summary['total_credits'] - summary['total_debits']
+            
+            # Fill NaN values
+            summary = summary.fillna(0)
+            
+            # Sort by total debits descending
+            summary = summary.sort_values('total_debits', ascending=False)
+            
+            return summary
+        
+        # Helper function to calculate monthly trends from filtered data
+        def calculate_monthly_trends_from_df(df_filtered):
+            if df_filtered.empty or 'category' not in df_filtered.columns:
+                return None
+            
+            # Filter out rows where category is None or empty
+            categorized_df = df_filtered[df_filtered['category'].notna() & (df_filtered['category'] != '')]
+            
+            if categorized_df.empty:
+                return None
+            
+            # Create month column
+            categorized_df = categorized_df.copy()
+            categorized_df['month'] = categorized_df['date'].dt.to_period('M').astype(str)
+            
+            trends = categorized_df.groupby(['month', 'category']).agg({
+                'debit': 'sum',
+                'credit': 'sum'
+            }).reset_index()
+            
+            trends.columns = ['month', 'category', 'total_debits', 'total_credits']
+            trends = trends.fillna(0)
+            
+            return trends
+        
+        # Get category data from filtered dataframe
+        category_summary = calculate_category_summary_from_df(filtered)
+        monthly_trends = calculate_monthly_trends_from_df(filtered)
         
         if category_summary is not None and not category_summary.empty:
             # Summary metrics
@@ -654,7 +730,7 @@ if df is not None and not df.empty:
                     textinfo='percent+label',
                     hovertemplate='<b>%{label}</b><br>Amount: ₹%{value:,.0f}<br>Transactions: %{customdata[0]}<extra></extra>'
                 )
-                st.plotly_chart(fig_pie, use_container_width=True)
+                st.plotly_chart(fig_pie, width='stretch')
             
             # Category details table
             st.subheader("📊 Detailed Category Breakdown")
@@ -696,7 +772,7 @@ if df is not None and not df.empty:
                     labels={'total_debits': 'Amount Spent (₹)', 'month': 'Month'}
                 )
                 fig_trends.update_layout(xaxis_title="Month", yaxis_title="Amount Spent (₹)")
-                st.plotly_chart(fig_trends, use_container_width=True)
+                st.plotly_chart(fig_trends, width='stretch')
                 
                 # Monthly trends table
                 with st.expander("View Monthly Trends Data"):
@@ -718,8 +794,8 @@ if df is not None and not df.empty:
                 )
                 
                 if selected_category:
-                    # Get transactions for the selected category
-                    category_transactions = df[df['category'] == selected_category].copy()
+                    # Get transactions for the selected category from filtered data
+                    category_transactions = filtered[filtered['category'] == selected_category].copy()
                     
                     if not category_transactions.empty:
                         # Show category summary
@@ -756,7 +832,7 @@ if df is not None and not df.empty:
                                 'bank': 'Bank'
                             },
                             hide_index=True,
-                            use_container_width=True
+                            width='stretch'
                         )
                         
                         # Monthly spending pattern for selected category
@@ -772,7 +848,7 @@ if df is not None and not df.empty:
                                 title=f"Monthly Spending Trend - {selected_category}",
                                 labels={'debit': 'Amount Spent (₹)', 'date': 'Month'}
                             )
-                            st.plotly_chart(fig_monthly, use_container_width=True)
+                            st.plotly_chart(fig_monthly, width='stretch')
                     else:
                         st.info(f"No transactions found for {selected_category} category.")
         
@@ -823,6 +899,17 @@ if df is not None and not df.empty:
             sweep_display = sweep_adjustments.copy()
             sweep_display["amount"] = sweep_display["amount"].apply(lambda x: format_indian_currency(x))
             st.dataframe(sweep_display, width='stretch', hide_index=True)
+        
+        # Show sweep balance history
+        st.subheader("📊 Sweep Balance History")
+        sweep_balance_history = get_sweep_balance_history("Saksham", "SBI")
+        if sweep_balance_history is not None and not sweep_balance_history.empty:
+            st.write("**SBI Sweep Account (MOD Balance) History**")
+            history_display = sweep_balance_history.copy()
+            history_display["mod_balance"] = history_display["mod_balance"].apply(lambda x: format_indian_currency(x))
+            st.dataframe(history_display, width='stretch', hide_index=True)
+        else:
+            st.info("No sweep balance history found. Load SBI data to see MOD balance tracking.")
         
         # Raw data view
         with st.expander("View Raw Transaction Data"):

@@ -115,6 +115,18 @@ def init_db():
         )
     """)
     
+    # Create sweep balance tracking table
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS sweep_balances (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner TEXT,
+            bank TEXT,
+            statement_date TEXT,
+            mod_balance REAL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
     conn.commit()
     conn.close()
 
@@ -177,6 +189,68 @@ def delete_sweep_adjustment(adjustment_id):
     c.execute("DELETE FROM sweep_adjustments WHERE id = ?", (adjustment_id,))
     conn.commit()
     conn.close()
+
+def update_sweep_balance(owner, bank, statement_date, mod_balance):
+    """Update or insert sweep balance for a statement period"""
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    
+    # Check if record exists for this owner, bank, and statement date
+    c.execute("""
+        SELECT id FROM sweep_balances 
+        WHERE owner = ? AND bank = ? AND statement_date = ?
+    """, (owner, bank, statement_date))
+    
+    existing = c.fetchone()
+    
+    if existing:
+        # Update existing record
+        c.execute("""
+            UPDATE sweep_balances 
+            SET mod_balance = ?, created_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (mod_balance, existing[0]))
+    else:
+        # Insert new record
+        c.execute("""
+            INSERT INTO sweep_balances (owner, bank, statement_date, mod_balance)
+            VALUES (?, ?, ?, ?)
+        """, (owner, bank, statement_date, mod_balance))
+    
+    conn.commit()
+    conn.close()
+
+def get_latest_sweep_balance(owner, bank):
+    """Get the latest sweep balance for an owner and bank"""
+    conn = sqlite3.connect(DB_NAME)
+    try:
+        df = pd.read_sql_query("""
+            SELECT mod_balance, statement_date 
+            FROM sweep_balances 
+            WHERE owner = ? AND bank = ?
+            ORDER BY statement_date DESC, created_at DESC
+            LIMIT 1
+        """, conn, params=(owner, bank))
+        
+        if not df.empty:
+            return df.iloc[0]['mod_balance']
+        return 0.0
+    finally:
+        conn.close()
+
+def get_sweep_balance_history(owner, bank):
+    """Get sweep balance history for an owner and bank"""
+    conn = sqlite3.connect(DB_NAME)
+    try:
+        df = pd.read_sql_query("""
+            SELECT statement_date, mod_balance, created_at
+            FROM sweep_balances 
+            WHERE owner = ? AND bank = ?
+            ORDER BY statement_date DESC, created_at DESC
+        """, conn, params=(owner, bank))
+        return df
+    finally:
+        conn.close()
 
 def get_account_balances():
     """Get latest balance for each account"""
