@@ -6,7 +6,12 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import glob
 import os
+import sys
 from datetime import datetime, timedelta
+
+# Add the project root to Python path
+project_root = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, project_root)
 
 def safe_format_date(date_series, format_str="%d-%m-%Y"):
     """Safely format dates handling various input formats"""
@@ -15,9 +20,9 @@ def safe_format_date(date_series, format_str="%d-%m-%Y"):
     except:
         return date_series.astype(str)
 
-from db import init_db, insert_transactions, fetch_all, get_sweep_balance_adjustments, add_sweep_balance_adjustment, get_inter_person_transfers, get_account_balances
-from parser import parse_csv, validate_data_integrity
-from indian_formatting import format_indian_currency, format_indian_number
+from src.database.db import init_db, insert_transactions, fetch_all, get_sweep_balance_adjustments, add_sweep_balance_adjustment, get_inter_person_transfers, get_account_balances, get_transfer_patterns, get_all_transfer_transactions, purge_all_data, get_transaction_count, check_duplicate_transactions
+from src.utils.parser import parse_csv, validate_data_integrity
+from src.utils.indian_formatting import format_indian_currency, format_indian_number
 
 # Initialize DB
 init_db()
@@ -40,26 +45,66 @@ with st.sidebar:
     
     # Data loading section
     st.subheader("📥 Data Management")
-    if st.button("🔄 Load CSV Data", type="primary"):
-        files = glob.glob("data/*.csv")
-        if files:
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            loaded_count = 0
-            
-            for i, f in enumerate(files):
-                status_text.text(f"Processing {os.path.basename(f)}...")
-                records = parse_csv(f)
-                if records:
-                    insert_transactions(records)
-                    loaded_count += 1
-                progress_bar.progress((i + 1) / len(files))
-            
-            status_text.empty()
-            progress_bar.empty()
-            st.success(f"✅ {loaded_count}/{len(files)} files loaded successfully!")
-        else:
-            st.warning("No CSV files found in the data/ directory")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("🔄 Load CSV Data", type="primary"):
+            files = glob.glob("data/*.csv")
+            if files:
+                # Check current transaction count
+                current_count = get_transaction_count()
+                if current_count > 0:
+                    st.warning(f"⚠️ Database already contains {current_count} transactions. Loading new data may create duplicates.")
+                    if not st.session_state.get('proceed_with_load', False):
+                        if st.button("Proceed Anyway", key="proceed_load"):
+                            st.session_state['proceed_with_load'] = True
+                            st.rerun()
+                        st.stop()
+                
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                loaded_count = 0
+                skipped_count = 0
+                
+                for i, f in enumerate(files):
+                    status_text.text(f"Processing {os.path.basename(f)}...")
+                    records = parse_csv(f)
+                    if records:
+                        # Check for duplicates
+                        duplicates = check_duplicate_transactions(records)
+                        if duplicates > 0:
+                            status_text.text(f"Skipping {duplicates} duplicate records in {os.path.basename(f)}...")
+                            skipped_count += duplicates
+                        
+                        insert_transactions(records)
+                        loaded_count += 1
+                    progress_bar.progress((i + 1) / len(files))
+                
+                status_text.empty()
+                progress_bar.empty()
+                
+                if skipped_count > 0:
+                    st.success(f"✅ {loaded_count}/{len(files)} files processed! {skipped_count} duplicate records were skipped.")
+                else:
+                    st.success(f"✅ {loaded_count}/{len(files)} files loaded successfully!")
+                
+                # Reset the proceed flag
+                st.session_state['proceed_with_load'] = False
+            else:
+                st.warning("No CSV files found in the data/ directory")
+    
+    with col2:
+        if st.button("🗑️ Purge Data", type="secondary", help="Delete all transaction data"):
+            if st.session_state.get('confirm_purge', False):
+                deleted_count = purge_all_data()
+                st.success(f"✅ Purged {deleted_count} records from database!")
+                st.session_state['confirm_purge'] = False
+                st.rerun()
+            else:
+                st.session_state['confirm_purge'] = True
+                st.warning("⚠️ Click again to confirm data purge")
+                st.rerun()
     
     # Sweep balance adjustments
     st.subheader("⚖️ Sweep Balance Adjustments")
@@ -295,28 +340,38 @@ if df is not None and not df.empty:
             
             st.plotly_chart(fig, width='stretch')
             
-            # Transaction details on date selection
-            st.subheader("🔍 Daily Transaction Details")
+            # Transaction details on week selection
+            st.subheader("🔍 Weekly Transaction Details")
             
-            # Date picker for detailed view
+            # Week picker for detailed view
             selected_date = st.date_input(
-                "Select a date to view detailed transactions:",
+                "Select a date to view weekly transactions (week containing this date):",
                 value=daily_summary["date"].iloc[-1] if not daily_summary.empty else datetime.now().date(),
                 key="main_date_picker"
             )
             
-            # Show transactions for selected date
-            day_transactions = filtered[filtered["date"].dt.date == selected_date]
+            # Calculate week start (Monday) and end (Sunday) for selected date
+            selected_datetime = datetime.combine(selected_date, datetime.min.time())
+            week_start = selected_datetime - timedelta(days=selected_datetime.weekday())  # Monday
+            week_end = week_start + timedelta(days=6)  # Sunday
             
-            if not day_transactions.empty:
+            st.write(f"**Week: {week_start.strftime('%d %b %Y')} to {week_end.strftime('%d %b %Y')}**")
+            
+            # Show transactions for selected week
+            week_transactions = filtered[
+                (filtered["date"].dt.date >= week_start.date()) & 
+                (filtered["date"].dt.date <= week_end.date())
+            ]
+            
+            if not week_transactions.empty:
                 col1, col2 = st.columns([2, 1])
                 
                 with col1:
-                    st.write(f"**Transactions on {selected_date}** ({len(day_transactions)} transactions)")
+                    st.write(f"**Transactions in selected week** ({len(week_transactions)} transactions)")
                     
                     # Format the transactions for better display
-                    display_df = day_transactions[["date", "owner", "bank", "description", "debit", "credit", "balance"]].copy()
-                    display_df["date"] = display_df["date"].dt.strftime("%H:%M")
+                    display_df = week_transactions[["date", "owner", "bank", "description", "debit", "credit", "balance"]].copy()
+                    display_df["date"] = display_df["date"].dt.strftime("%d %b %Y")
                     display_df["debit"] = display_df["debit"].apply(lambda x: format_indian_currency(x) if x > 0 else "")
                     display_df["credit"] = display_df["credit"].apply(lambda x: format_indian_currency(x) if x > 0 else "")
                     display_df["balance"] = display_df["balance"].apply(lambda x: format_indian_currency(x))
@@ -328,61 +383,172 @@ if df is not None and not df.empty:
                     )
                 
                 with col2:
-                    day_summary = day_transactions.agg({
+                    week_summary = week_transactions.agg({
                         "credit": "sum",
                         "debit": "sum"
                     })
                     
-                    st.metric("Credits", format_indian_currency(day_summary['credit']))
-                    st.metric("Debits", format_indian_currency(day_summary['debit']))
-                    st.metric("Net Change", format_indian_currency(day_summary['credit'] - day_summary['debit']))
+                    # Daily breakdown for the week
+                    daily_breakdown = week_transactions.groupby(week_transactions["date"].dt.date).agg({
+                        "credit": "sum",
+                        "debit": "sum"
+                    }).reset_index()
+                    
+                    st.metric("Weekly Credits", format_indian_currency(week_summary['credit']))
+                    st.metric("Weekly Debits", format_indian_currency(week_summary['debit']))
+                    st.metric("Net Weekly Change", format_indian_currency(week_summary['credit'] - week_summary['debit']))
+                    
+                    if len(daily_breakdown) > 1:
+                        st.write("**Daily Summary:**")
+                        for _, day in daily_breakdown.iterrows():
+                            day_name = day['date'].strftime('%a %d')
+                            net_change = day['credit'] - day['debit']
+                            if net_change >= 0:
+                                st.write(f"{day_name}: :green[{format_indian_currency(net_change)}]")
+                            else:
+                                st.write(f"{day_name}: :red[{format_indian_currency(net_change)}]")
             else:
-                st.info(f"No transactions found for {selected_date}")
+                st.info(f"No transactions found for the week containing {selected_date}")
 
-    # Tab 2: Inter-person Transfers
+    # Tab 2: Inter-Bank Transfers
     with tab2:
-        st.subheader("🔄 Inter-Person Transfer Analysis")
+        st.subheader("🔄 Inter-Bank Transfer Analysis")
+        st.write("Analysis of transfers between different bank accounts - either same person's different banks or between different persons")
         
+        # Get both transfer types
         transfers = get_inter_person_transfers()
+        transfer_patterns = get_transfer_patterns()
+        all_transfers = get_all_transfer_transactions()
         
-        if transfers is not None and not transfers.empty:
-            st.write(f"**Found {len(transfers)} potential inter-person transfers**")
+        # Create sub-tabs for different views
+        transfer_tab1, transfer_tab2 = st.tabs(["📊 Transfer Patterns", "🔄 Inter-Bank Transfers"])
+        
+        with transfer_tab1:
+            st.subheader("📊 All Transfer Transactions")
             
-            # Format transfers for display
-            transfers_display = transfers.copy()
-            transfers_display["amount"] = transfers_display["amount"].apply(lambda x: format_indian_currency(x))
-            transfers_display["date"] = safe_format_date(transfers_display["date"])
+            if all_transfers is not None and not all_transfers.empty:
+                st.write(f"**Found {len(all_transfers)} transfer transactions**")
+                
+                # Summary metrics
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    total_debits = all_transfers['debit'].sum()
+                    st.metric("Total Outgoing", format_indian_currency(total_debits))
+                
+                with col2:
+                    total_credits = all_transfers['credit'].sum()
+                    st.metric("Total Incoming", format_indian_currency(total_credits))
+                
+                with col3:
+                    net_transfer = total_credits - total_debits
+                    st.metric("Net Transfer", format_indian_currency(net_transfer))
+                
+                with col4:
+                    unique_methods = all_transfers['transfer_method'].nunique()
+                    st.metric("Transfer Methods", unique_methods)
+                
+                # Transfer method breakdown
+                st.subheader("Transfer Method Breakdown")
+                method_summary = all_transfers.groupby('transfer_method').agg({
+                    'debit': 'sum',
+                    'credit': 'sum',
+                    'date': 'count'
+                }).reset_index()
+                method_summary.columns = ['Transfer Method', 'Total Debits', 'Total Credits', 'Transaction Count']
+                
+                # Format for display
+                method_display = method_summary.copy()
+                method_display['Total Debits'] = method_display['Total Debits'].apply(format_indian_currency)
+                method_display['Total Credits'] = method_display['Total Credits'].apply(format_indian_currency)
+                method_display['Transaction Count'] = method_display['Transaction Count'].apply(format_indian_number)
+                
+                st.dataframe(method_display, width='stretch', hide_index=True)
+                
+                # Detailed transaction list
+                st.subheader("Detailed Transfer Transactions")
+                
+                # Format transfers for display
+                transfers_display = all_transfers.copy()
+                transfers_display["debit"] = transfers_display["debit"].apply(lambda x: format_indian_currency(x) if x > 0 else "")
+                transfers_display["credit"] = transfers_display["credit"].apply(lambda x: format_indian_currency(x) if x > 0 else "")
+                transfers_display["balance"] = transfers_display["balance"].apply(lambda x: format_indian_currency(x))
+                transfers_display["date"] = safe_format_date(transfers_display["date"])
+                
+                # Filter by transfer method
+                selected_methods = st.multiselect(
+                    "Filter by Transfer Method:",
+                    options=all_transfers['transfer_method'].unique(),
+                    default=all_transfers['transfer_method'].unique()
+                )
+                
+                if selected_methods:
+                    filtered_transfers = transfers_display[transfers_display['transfer_method'].isin(selected_methods)]
+                    st.dataframe(filtered_transfers, width='stretch', hide_index=True)
+                else:
+                    st.info("Select at least one transfer method to view transactions")
+                    
+            else:
+                st.info("No transfer transactions found. Transfer detection looks for keywords like TRANSFER, UPI, IMPS, NEFT, RTGS in transaction descriptions.")
+        
+        with transfer_tab2:
+            st.subheader("🔄 Inter-Bank Transfers")
             
-            st.dataframe(transfers_display, width='stretch', hide_index=True)
-            
-            # Transfer flow visualization
-            if len(transfers) > 0:
-                st.subheader("Transfer Flow Network")
+            if transfers is not None and not transfers.empty:
+                st.write(f"**Found {len(transfers)} inter-bank transfers**")
                 
-                # Create a simple transfer summary
-                transfer_summary = transfers.groupby(['from_owner', 'to_owner'])['amount'].sum().reset_index()
+                # Show transfer type breakdown
+                if 'transfer_type' in transfers.columns:
+                    type_counts = transfers['transfer_type'].value_counts()
+                    st.write("**Transfer Types:**")
+                    for transfer_type, count in type_counts.items():
+                        st.write(f"• {transfer_type}: {count} transfers")
                 
-                fig = go.Figure(data=[go.Sankey(
-                    node=dict(
-                        pad=15,
-                        thickness=20,
-                        line=dict(color="black", width=0.5),
-                        label=list(set(transfers['from_owner'].tolist() + transfers['to_owner'].tolist())),
-                        color="blue"
-                    ),
-                    link=dict(
-                        source=[list(set(transfers['from_owner'].tolist() + transfers['to_owner'].tolist())).index(x) 
-                               for x in transfers['from_owner']],
-                        target=[list(set(transfers['from_owner'].tolist() + transfers['to_owner'].tolist())).index(x) 
-                               for x in transfers['to_owner']],
-                        value=transfers['amount']
-                    )
-                )])
+                # Format transfers for display
+                transfers_display = transfers.copy()
+                transfers_display["amount"] = transfers_display["amount"].apply(lambda x: format_indian_currency(x))
+                transfers_display["date"] = safe_format_date(transfers_display["date"])
                 
-                fig.update_layout(title_text="Money Flow Between Family Members", font_size=10)
-                st.plotly_chart(fig, width='stretch')
-        else:
-            st.info("No inter-person transfers detected. This feature looks for matching debit/credit amounts on the same date between different accounts.")
+                st.dataframe(transfers_display, width='stretch', hide_index=True)
+                
+                # Transfer flow visualization for exact matches
+                exact_matches = transfers[transfers.get('detection_type', '') == 'Exact Match'] if 'detection_type' in transfers.columns else transfers
+                if len(exact_matches) > 0:
+                    st.subheader("Transfer Flow Network")
+                    
+                    # Create a simple transfer summary
+                    transfer_summary = exact_matches.groupby(['from_owner', 'to_owner'])['amount'].sum().reset_index()
+                    
+                    if len(transfer_summary) > 0:
+                        fig = go.Figure(data=[go.Sankey(
+                            node=dict(
+                                pad=15,
+                                thickness=20,
+                                line=dict(color="black", width=0.5),
+                                label=list(set(exact_matches['from_owner'].tolist() + exact_matches['to_owner'].tolist())),
+                                color="blue"
+                            ),
+                            link=dict(
+                                source=[list(set(exact_matches['from_owner'].tolist() + exact_matches['to_owner'].tolist())).index(x) 
+                                       for x in exact_matches['from_owner']],
+                                target=[list(set(exact_matches['from_owner'].tolist() + exact_matches['to_owner'].tolist())).index(x) 
+                                       for x in exact_matches['to_owner']],
+                                value=exact_matches['amount']
+                            )
+                        )])
+                        
+                        fig.update_layout(title_text="Money Flow Between Accounts", font_size=10)
+                        st.plotly_chart(fig, width='stretch')
+                    else:
+                        st.info("No transfer flow data available for visualization")
+            else:
+                st.info("No inter-account transfers detected.")
+                st.markdown("""
+                **Note:** Inter-account transfer detection works best when:
+                - Multiple family member accounts are loaded
+                - Transactions have matching amounts and dates
+                - Or when transaction descriptions contain transfer keywords
+                """)
 
     # Tab 3: Account Summary
     with tab3:

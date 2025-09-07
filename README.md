@@ -1,193 +1,207 @@
 # 💰 Family Finance Dashboard
 
-A comprehensive personal finance management solution built with Streamlit to manage all your family's financial data with interactive visualizations and intelligent analysis.
+A comprehensive Streamlit-based personal finance management dashboard with Indian number formatting and advanced transaction analysis.
 
 ## 🌟 Features
 
-### � Indian Number System Support
-- **Proper comma placement** following Indian standards (lakhs, crores)
-- **Currency formatting** with ₹ symbol and Indian comma conventions
-- **Consistent formatting** across all charts, tables, and metrics
-- **Hover tooltips** display amounts in Indian format
+- **📊 Interactive Dashboard**: Multi-chart visualization (Line, Bar, Area) with hover details
+- **🔄 Inter-Bank Transfer Analysis**: Detect transfers between different banks and accounts
+- **📅 Weekly Transaction Details**: Comprehensive weekly transaction breakdown
+- **💱 Indian Number Formatting**: Native support for Indian numbering system (lakhs, crores)
+- **⚖️ Sweep Balance Adjustments**: Manual balance corrections and adjustments
+- **📈 Real-time Analytics**: Account balances, net flows, and transaction insights
+- **🔍 Advanced Filtering**: Filter by accounts, date ranges, and transaction types
+- **🗄️ Data Management**: Load CSV data with duplicate detection and purge functionality
 
-### �📊 Interactive Dashboard
-- **Real-time visualizations** with multiple chart types (Line, Bar, Area charts)
-- **Hover details** showing transaction information for each day
-- **Daily balance trends** with smooth transitions
-- **Credits vs Debits** comparison charts
+## 📁 Project Structure
 
-### 🏦 Multi-Account Management
-- Support for **multiple family members** and **multiple banks**
-- **Checkbox filters** to select specific bank accounts
-- **Account-wise summaries** and balance distributions
-- **Date range filtering** for focused analysis
+```
+finance-dashboard/
+├── src/                          # Source code
+│   ├── database/                 # Database operations
+│   │   ├── __init__.py
+│   │   └── db.py                 # SQLite database functions
+│   └── utils/                    # Utility functions
+│       ├── __init__.py
+│       ├── parser.py             # CSV parsing utilities
+│       └── indian_formatting.py # Indian number formatting
+├── scripts/                      # Utility scripts
+│   ├── setup.sh                 # Environment setup script
+│   ├── start.sh                 # Application startup script
+│   ├── demo.py                  # Demo script
+│   ├── demo_indian_formatting.py
+│   └── validate_data.py         # Data validation
+├── tests/                       # Test files
+│   ├── __init__.py
+│   └── test_formatting.py      # Unit tests
+├── docs/                        # Documentation
+│   └── ENHANCEMENT_SUMMARY.md   # Feature enhancement log
+├── data/                        # Data files
+│   ├── README.md               # Data directory documentation
+│   └── sample/                 # Sample data (git-tracked)
+├── app.py                      # Main Streamlit application
+├── requirements.txt            # Python dependencies
+├── .gitignore                  # Git ignore rules
+└── README.md                   # This file
+```
 
-### 🔄 Inter-Person Transfer Detection
-- **Automatic detection** of money transfers between family members
-- **Transfer flow visualization** using Sankey diagrams
-- **Matching algorithm** based on amounts and dates
-
-### ⚖️ Sweep Balance Adjustments
-- **Easy adjustments** for sweep account balances
-- **Historical tracking** of all adjustments
-- **Automatic application** to future calculations
-
-### 📋 Data Quality & Integrity
-- **Validation checks** for data consistency
-- **Duplicate detection** and anomaly highlighting
-- **Statistics overview** of your financial data
-- **Raw data inspection** capabilities
-
-## 🚀 Getting Started
+## 🚀 Quick Start
 
 ### Prerequisites
 - Python 3.8 or higher
-- pip package manager
+- Git (optional, for version control)
 
-### Installation
+### Setup
 
-1. **Clone or download** this repository
-2. **Install dependencies**:
+1. **Clone or download the repository**
    ```bash
-   pip3 install -r requirements.txt
+   git clone <repository-url>
+   cd finance-dashboard
    ```
 
-3. **Prepare your data**:
-   - Place your bank statement CSV files in the `data/` folder
-   - Use the naming convention: `Owner_Bank.csv` (e.g., `Saksham_SBI.csv`, `Priya_HDFC.csv`)
+2. **Run the setup script**
+   ```bash
+   ./scripts/setup.sh
+   ```
 
-4. **Run the application**:
+3. **Start the application**
+   ```bash
+   ./scripts/start.sh
+   ```
+
+   Or manually:
+   ```bash
+   source venv/bin/activate
+   python -m streamlit run app.py
+   ```
+
+4. **Open your browser** to `http://localhost:8501`
+
+### Manual Setup (Alternative)
+
+1. **Create virtual environment**
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+2. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Run the application**
    ```bash
    streamlit run app.py
    ```
 
-5. **Open your browser** and navigate to the URL shown in the terminal (usually `http://localhost:8501`)
+## 📊 Usage
 
-## 📁 File Structure
+### Data Loading
+1. Place your bank CSV files in the `data/` directory
+2. Use the "🔄 Load CSV Data" button in the sidebar
+3. The system will detect and skip duplicate transactions
 
+### CSV Format
+Your CSV files should contain columns for:
+- Date (various formats supported)
+- Description
+- Debit Amount
+- Credit Amount  
+- Balance
+
+### Features Overview
+
+#### 📊 Dashboard Tab
+- Interactive charts with Indian number formatting
+- Account filtering with checkboxes
+- Weekly summary with transaction counts
+- Hover tooltips showing transaction details
+
+#### 🔄 Transfers Tab
+- **Transfer Patterns**: Overview of all transfer transactions
+- **Inter-Bank Transfers**: Detected transfers between accounts
+
+#### 💼 Accounts Tab
+- Account-wise balance summary
+- Sweep balance adjustments
+- Account performance metrics
+
+#### 📋 Data Quality Tab
+- Data validation and integrity checks
+- Transaction statistics
+- Duplicate detection results
+
+## 🔒 Security & Privacy
+
+### What's Safe to Commit to Git
+- ✅ Source code (`src/`, `scripts/`, `tests/`)
+- ✅ Documentation (`docs/`, `README.md`)
+- ✅ Configuration files (`.gitignore`, `requirements.txt`)
+- ✅ Sample/anonymized data (`data/sample/`)
+
+### What's Automatically Ignored
+- ❌ Personal financial data (`data/*.csv`)
+- ❌ Database files (`*.db`, `*.sqlite`)
+- ❌ Virtual environment (`venv/`)
+- ❌ Environment files (`.env`)
+- ❌ Cache files (`__pycache__/`, `.DS_Store`)
+
+## 🧪 Testing
+
+Run the test suite:
+```bash
+source venv/bin/activate
+python -m pytest tests/ -v
 ```
-finance-dashboard/
-├── app.py              # Main Streamlit application
-├── db.py              # Database operations and management
-├── parser.py          # CSV parsing and data processing
-├── requirements.txt   # Python dependencies
-├── finance.db        # SQLite database (created automatically)
-└── data/             # Directory for CSV files
-    └── *.csv         # Your bank statement files
+
+Or run individual tests:
+```bash
+python tests/test_formatting.py
 ```
 
-## 💡 Usage Guide
+## 📈 Indian Number Formatting
 
-### 1. Loading Data
-- Click **"🔄 Load CSV Data"** in the sidebar
-- The app will automatically process all CSV files in the `data/` folder
-- Progress bar shows loading status
+The dashboard uses authentic Indian number formatting:
+- ₹1,000 (One thousand)
+- ₹1,00,000 (One lakh)
+- ₹10,00,000 (Ten lakhs)
+- ₹1,00,00,000 (One crore)
 
-### 2. Exploring Your Data
-- Use the **Dashboard tab** for main overview and trends
-- Check **Transfers tab** for inter-family money movements
-- View **Accounts tab** for detailed account summaries
-- Monitor **Data Quality tab** for validation and integrity
+## 🛠️ Development
 
-### 3. Filtering and Analysis
-- **Select specific accounts** using checkboxes in the sidebar
-- **Choose date ranges** for focused analysis
-- **Switch chart types** for different perspectives
-- **Click on specific dates** to see detailed transactions
+### Adding New Features
+1. Create feature branches from `main`
+2. Add tests for new functionality
+3. Update documentation
+4. Ensure all tests pass
 
-### 4. Sweep Balance Adjustments
-- Open the **"Sweep Balance Adjustments"** section in sidebar
-- Add adjustments for accounts with sweep facilities
-- Adjustments are automatically applied to all future calculations
+### Code Structure
+- `src/database/db.py`: Database operations and queries
+- `src/utils/parser.py`: CSV parsing and data validation
+- `src/utils/indian_formatting.py`: Number formatting utilities
+- `app.py`: Main Streamlit application and UI
 
-## 🏗️ Supported Bank Formats
+## 📝 Contributing
 
-The parser automatically detects and handles various CSV formats from different banks:
-
-### Column Mapping
-- **Dates**: "date", "txn date", "transaction date", "value date"
-- **Descriptions**: "description", "narration", "remarks", "particulars"
-- **Debits**: "debit", "withdrawal amt.", "withdrawal amount"
-- **Credits**: "credit", "deposit amt.", "deposit amount"
-- **Balance**: "balance", "balance amt.", "available balance"
-
-### Features
-- **Automatic encoding detection** (UTF-8, Latin1, CP1252)
-- **Indian number format support** (commas, quotes, currency symbols)
-- **Multiple date format parsing**
-- **Transfer transaction detection**
-- **Data cleaning and standardization**
-
-## 🔧 Customization
-
-### Adding New Banks
-1. Update the column mapping in `parser.py`
-2. Add new column name variations to the `col_map` dictionary
-3. Test with sample data
-
-### Extending Features
-- **Custom metrics**: Add new calculations in `app.py`
-- **Additional charts**: Use Plotly or Altair for new visualizations
-- **Export functionality**: Add CSV/PDF export options
-- **Budgeting features**: Implement spending categories and limits
-
-## 🇮🇳 Indian Number System Examples
-
-The application uses the Indian number system for all currency and number displays:
-
-| Amount | International Format | Indian Format |
-|--------|---------------------|---------------|
-| ₹1,500 | ₹1,500 | ₹1,500 |
-| ₹15,000 | ₹15,000 | ₹15,000 |
-| ₹150,000 | ₹150,000 | ₹1,50,000 |
-| ₹1,500,000 | ₹1,500,000 | ₹15,00,000 |
-| ₹15,000,000 | ₹15,000,000 | ₹1,50,00,000 |
-
-**Benefits:**
-- Natural reading for Indian users
-- Familiar lakhs and crores representation
-- Consistent across all dashboard elements
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-1. **"No data found"**
-   - Check CSV files are in the `data/` folder
-   - Verify filename format: `Owner_Bank.csv`
-   - Ensure CSV files have proper headers
-
-2. **Date parsing errors**
-   - Check date format in your CSV files
-   - Add new date formats to `parse_date()` function in `parser.py`
-
-3. **Column not recognized**
-   - Add column name variations to `col_map` in `parser.py`
-   - Check for extra spaces or special characters in headers
-
-4. **Missing transactions**
-   - Verify CSV encoding (try different encodings)
-   - Check for empty rows or formatting issues
-
-## 📝 Data Privacy
-
-- All data is stored **locally** in SQLite database
-- **No external connections** or data sharing
-- **Complete control** over your financial information
-- **Secure processing** within your environment
-
-## 🤝 Contributing
-
-Feel free to contribute to this project by:
-- **Reporting bugs** and issues
-- **Suggesting new features**
-- **Submitting pull requests**
-- **Improving documentation**
+1. Fork the repository
+2. Create a feature branch
+3. Add tests for new features
+4. Ensure all tests pass
+5. Submit a pull request
 
 ## 📄 License
 
-This project is open-source and available under the MIT License.
+This project is for personal use. Ensure you comply with your bank's terms of service when analyzing transaction data.
 
----
+## 🆘 Troubleshooting
 
-**Happy Finance Tracking! 💰📊**
+### Common Issues
+- **Import errors**: Run `./scripts/setup.sh` to ensure proper environment setup
+- **Database errors**: Delete `finance.db` and restart the application
+- **CSV parsing errors**: Check your CSV format matches expected columns
+
+### Getting Help
+- Check the `docs/` directory for detailed documentation
+- Run `python -m streamlit run app.py --help` for Streamlit options
+- Ensure your Python version is 3.8 or higher
