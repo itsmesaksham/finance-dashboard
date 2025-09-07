@@ -20,7 +20,7 @@ def categorize_transaction(description):
         ],
         'Transportation': [
             'UBER', 'OLA', 'METRO', 'PETROL', 'DIESEL', 'FUEL', 'BUS', 'TRAIN',
-            'TAXI', 'AUTO', 'TRANSPORT', 'PARKING', 'TOLL', 'FASTAG',
+            'TAXI', 'TRANSPORT', 'PARKING', 'TOLL', 'FASTAG',
             'RAILWAY', 'IRCTC', 'FLIGHT', 'AIRLINE', 'AIRPORT'
         ],
         'Shopping': [

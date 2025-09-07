@@ -515,45 +515,105 @@ if df is not None and not df.empty:
                     for transfer_type, count in type_counts.items():
                         st.write(f"• {transfer_type}: {count} transfers")
                 
-                # Format transfers for display
-                transfers_display = transfers.copy()
-                transfers_display["amount"] = transfers_display["amount"].apply(lambda x: format_indian_currency(x))
+                # Create sortable dataframe with proper data types
+                transfers_sortable = transfers.copy()
                 
-                # Convert dates to datetime for proper sorting, then format for display
-                transfers_display["date"] = pd.to_datetime(transfers_display["date"], format="%d-%m-%Y", errors='coerce')
-                transfers_display = transfers_display.sort_values("date", ascending=False)
+                # Convert date to datetime for proper sorting
+                transfers_sortable["date"] = pd.to_datetime(transfers_sortable["date"], format="%d-%m-%Y", errors='coerce')
+                
+                # Ensure amount is numeric for proper sorting
+                if 'amount' in transfers_sortable.columns:
+                    transfers_sortable['amount'] = pd.to_numeric(transfers_sortable['amount'], errors='coerce')
+                
+                # Sort by date (descending) and then by amount (descending)
+                transfers_sortable = transfers_sortable.sort_values(['date', 'amount'], ascending=[False, False])
+                
+                # Format for display after sorting
+                transfers_display = transfers_sortable.copy()
+                transfers_display["amount"] = transfers_display["amount"].apply(lambda x: format_indian_currency(x) if pd.notna(x) else "₹0.00")
                 transfers_display["date"] = transfers_display["date"].dt.strftime("%d-%m-%Y")
                 
-                st.dataframe(transfers_display, width='stretch', hide_index=True)
+                st.dataframe(
+                    transfers_display, 
+                    width='stretch', 
+                    hide_index=True,
+                    column_config={
+                        'date': st.column_config.TextColumn('Date'),
+                        'amount': st.column_config.TextColumn('Amount'),
+                        'from_owner': st.column_config.TextColumn('From'),
+                        'to_owner': st.column_config.TextColumn('To'),
+                        'transfer_type': st.column_config.TextColumn('Type')
+                    }
+                )
                 
-                # Transfer flow visualization for exact matches
-                exact_matches = transfers[transfers.get('detection_type', '') == 'Exact Match'] if 'detection_type' in transfers.columns else transfers
+                # Transfer flow visualization - Fixed for different banks
+                exact_matches = transfers_sortable[transfers_sortable.get('detection_type', '') == 'Exact Match'] if 'detection_type' in transfers_sortable.columns else transfers_sortable
                 if len(exact_matches) > 0:
                     st.subheader("Transfer Flow Network")
                     
-                    # Create a simple transfer summary
-                    transfer_summary = exact_matches.groupby(['from_owner', 'to_owner'])['amount'].sum().reset_index()
+                    # Create account labels combining owner and bank for clarity
+                    exact_matches_viz = exact_matches.copy()
+                    exact_matches_viz['from_account'] = exact_matches_viz['from_owner'] + " (" + exact_matches_viz['from_bank'] + ")"
+                    exact_matches_viz['to_account'] = exact_matches_viz['to_owner'] + " (" + exact_matches_viz['to_bank'] + ")"
+                    
+                    # Create transfer summary by account pairs
+                    transfer_summary = exact_matches_viz.groupby(['from_account', 'to_account'])['amount'].sum().reset_index()
                     
                     if len(transfer_summary) > 0:
+                        # Get all unique accounts (nodes)
+                        all_accounts = list(set(transfer_summary['from_account'].tolist() + transfer_summary['to_account'].tolist()))
+                        
+                        # Create source and target indices
+                        source_indices = [all_accounts.index(account) for account in transfer_summary['from_account']]
+                        target_indices = [all_accounts.index(account) for account in transfer_summary['to_account']]
+                        
+                        # Create colors for different banks
+                        node_colors = []
+                        for account in all_accounts:
+                            if 'HDFC' in account:
+                                node_colors.append('rgba(255, 99, 132, 0.8)')  # Red for HDFC
+                            elif 'SBI' in account:
+                                node_colors.append('rgba(54, 162, 235, 0.8)')  # Blue for SBI
+                            elif 'ICICI' in account:
+                                node_colors.append('rgba(255, 206, 86, 0.8)')  # Yellow for ICICI
+                            elif 'Axis' in account:
+                                node_colors.append('rgba(75, 192, 192, 0.8)')  # Teal for Axis
+                            else:
+                                node_colors.append('rgba(153, 102, 255, 0.8)')  # Purple for others
+                        
                         fig = go.Figure(data=[go.Sankey(
                             node=dict(
                                 pad=15,
                                 thickness=20,
                                 line=dict(color="black", width=0.5),
-                                label=list(set(exact_matches['from_owner'].tolist() + exact_matches['to_owner'].tolist())),
-                                color="blue"
+                                label=all_accounts,
+                                color=node_colors
                             ),
                             link=dict(
-                                source=[list(set(exact_matches['from_owner'].tolist() + exact_matches['to_owner'].tolist())).index(x) 
-                                       for x in exact_matches['from_owner']],
-                                target=[list(set(exact_matches['from_owner'].tolist() + exact_matches['to_owner'].tolist())).index(x) 
-                                       for x in exact_matches['to_owner']],
-                                value=exact_matches['amount']
+                                source=source_indices,
+                                target=target_indices,
+                                value=transfer_summary['amount'].tolist(),
+                                label=[f"₹{amount:,.0f}" for amount in transfer_summary['amount']]
                             )
                         )])
                         
-                        fig.update_layout(title_text="Money Flow Between Accounts", font_size=10)
+                        fig.update_layout(
+                            title_text="Money Flow Between Bank Accounts", 
+                            font_size=12,
+                            height=500
+                        )
                         st.plotly_chart(fig, width='stretch')
+                        
+                        # Show summary statistics
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            total_flow = transfer_summary['amount'].sum()
+                            st.metric("Total Transfer Volume", format_indian_currency(total_flow))
+                        with col2:
+                            avg_transfer = transfer_summary['amount'].mean()
+                            st.metric("Average Transfer", format_indian_currency(avg_transfer))
+                        with col3:
+                            st.metric("Transfer Relationships", len(transfer_summary))
                     else:
                         st.info("No transfer flow data available for visualization")
             else:
