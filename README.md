@@ -4,7 +4,13 @@ A comprehensive personal finance management solution built with Streamlit to man
 
 ## 🌟 Features
 
-### 📊 Interactive Dashboard
+### � Indian Number System Support
+- **Proper comma placement** following Indian standards (lakhs, crores)
+- **Currency formatting** with ₹ symbol and Indian comma conventions
+- **Consistent formatting** across all charts, tables, and metrics
+- **Hover tooltips** display amounts in Indian format
+
+### �📊 Interactive Dashboard
 - **Real-time visualizations** with multiple chart types (Line, Bar, Area charts)
 - **Hover details** showing transaction information for each day
 - **Daily balance trends** with smooth transitions
@@ -107,7 +113,7 @@ The parser automatically detects and handles various CSV formats from different 
 
 ### Features
 - **Automatic encoding detection** (UTF-8, Latin1, CP1252)
-- **Indian number format support** (commas, quotes)
+- **Indian number format support** (commas, quotes, currency symbols)
 - **Multiple date format parsing**
 - **Transfer transaction detection**
 - **Data cleaning and standardization**
@@ -124,6 +130,23 @@ The parser automatically detects and handles various CSV formats from different 
 - **Additional charts**: Use Plotly or Altair for new visualizations
 - **Export functionality**: Add CSV/PDF export options
 - **Budgeting features**: Implement spending categories and limits
+
+## 🇮🇳 Indian Number System Examples
+
+The application uses the Indian number system for all currency and number displays:
+
+| Amount | International Format | Indian Format |
+|--------|---------------------|---------------|
+| ₹1,500 | ₹1,500 | ₹1,500 |
+| ₹15,000 | ₹15,000 | ₹15,000 |
+| ₹150,000 | ₹150,000 | ₹1,50,000 |
+| ₹1,500,000 | ₹1,500,000 | ₹15,00,000 |
+| ₹15,000,000 | ₹15,000,000 | ₹1,50,00,000 |
+
+**Benefits:**
+- Natural reading for Indian users
+- Familiar lakhs and crores representation
+- Consistent across all dashboard elements
 
 ## 🐛 Troubleshooting
 

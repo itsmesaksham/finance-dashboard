@@ -4,16 +4,18 @@ import re
 from datetime import datetime
 
 def safe_float(value):
-    """Safely convert a value to float, handling empty strings, NaN, etc."""
+    """Safely convert a value to float, handling Indian number formats, empty strings, NaN, etc."""
     if pd.isna(value) or value == "":
         return 0.0
     try:
-        # Remove commas and handle Indian number formatting
+        # Remove commas, quotes, and handle Indian number formatting
         if isinstance(value, str):
             value = value.replace(",", "").replace("\"", "").strip()
             # Handle negative values in parentheses
             if value.startswith("(") and value.endswith(")"):
                 value = "-" + value[1:-1]
+            # Handle Indian currency symbols
+            value = value.replace("₹", "").replace("Rs.", "").replace("Rs", "").strip()
         return float(value)
     except (ValueError, TypeError):
         return 0.0

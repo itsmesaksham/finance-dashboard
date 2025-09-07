@@ -17,6 +17,7 @@ def safe_format_date(date_series, format_str="%d-%m-%Y"):
 
 from db import init_db, insert_transactions, fetch_all, get_sweep_balance_adjustments, add_sweep_balance_adjustment, get_inter_person_transfers, get_account_balances
 from parser import parse_csv, validate_data_integrity
+from indian_formatting import format_indian_currency, format_indian_number
 
 # Initialize DB
 init_db()
@@ -154,29 +155,29 @@ if df is not None and not df.empty:
                 current_balance = filtered.groupby(['owner', 'bank'])['balance'].last().sum()
                 st.metric(
                     label="💰 Total Balance",
-                    value=f"₹{current_balance:,.2f}"
+                    value=format_indian_currency(current_balance)
                 )
         
         with col2:
             total_credit = filtered["credit"].sum()
             st.metric(
                 label="📈 Total Credits",
-                value=f"₹{total_credit:,.2f}"
+                value=format_indian_currency(total_credit)
             )
         
         with col3:
             total_debit = filtered["debit"].sum()
             st.metric(
                 label="📉 Total Debits",
-                value=f"₹{total_debit:,.2f}"
+                value=format_indian_currency(total_debit)
             )
         
         with col4:
             net_flow = total_credit - total_debit
             st.metric(
                 label="🔄 Net Flow",
-                value=f"₹{net_flow:,.2f}",
-                delta=f"₹{net_flow:,.2f}"
+                value=format_indian_currency(net_flow),
+                delta=format_indian_currency(net_flow)
             )
         
         st.markdown("---")
@@ -205,6 +206,11 @@ if df is not None and not df.empty:
             daily_summary.columns = ["date", "total_credit", "total_debit", "end_balance", "transaction_count"]
             daily_summary["net_change"] = daily_summary["total_credit"] - daily_summary["total_debit"]
             
+            # Add formatted columns for hover tooltips
+            daily_summary["balance_formatted"] = daily_summary["end_balance"].apply(format_indian_currency)
+            daily_summary["credit_formatted"] = daily_summary["total_credit"].apply(format_indian_currency)
+            daily_summary["debit_formatted"] = daily_summary["total_debit"].apply(format_indian_currency)
+            
             # Create interactive chart based on selection
             if chart_type == "Line Chart":
                 fig = go.Figure()
@@ -217,10 +223,10 @@ if df is not None and not df.empty:
                     line=dict(color='#1f77b4', width=3),
                     marker=dict(size=6),
                     hovertemplate='<b>Date:</b> %{x}<br>' +
-                                 '<b>Balance:</b> ₹%{y:,.2f}<br>' +
-                                 '<b>Transactions:</b> %{customdata}<br>' +
+                                 '<b>Balance:</b> %{customdata[0]}<br>' +
+                                 '<b>Transactions:</b> %{customdata[1]}<br>' +
                                  '<extra></extra>',
-                    customdata=daily_summary["transaction_count"]
+                    customdata=list(zip(daily_summary["balance_formatted"], daily_summary["transaction_count"]))
                 ))
                 
                 fig.update_layout(
@@ -240,8 +246,9 @@ if df is not None and not df.empty:
                     name='Credits',
                     marker_color='#2E8B57',
                     hovertemplate='<b>Date:</b> %{x}<br>' +
-                                 '<b>Credits:</b> ₹%{y:,.2f}<br>' +
-                                 '<extra></extra>'
+                                 '<b>Credits:</b> %{customdata}<br>' +
+                                 '<extra></extra>',
+                    customdata=daily_summary["credit_formatted"]
                 ))
                 
                 fig.add_trace(go.Bar(
@@ -250,8 +257,9 @@ if df is not None and not df.empty:
                     name='Debits',
                     marker_color='#DC143C',
                     hovertemplate='<b>Date:</b> %{x}<br>' +
-                                 '<b>Debits:</b> ₹%{y:,.2f}<br>' +
-                                 '<extra></extra>'
+                                 '<b>Debits:</b> %{customdata}<br>' +
+                                 '<extra></extra>',
+                    customdata=daily_summary["debit_formatted"]
                 ))
                 
                 fig.update_layout(
@@ -273,8 +281,9 @@ if df is not None and not df.empty:
                     fill='tonexty',
                     line=dict(color='#1f77b4'),
                     hovertemplate='<b>Date:</b> %{x}<br>' +
-                                 '<b>Balance:</b> ₹%{y:,.2f}<br>' +
-                                 '<extra></extra>'
+                                 '<b>Balance:</b> %{customdata}<br>' +
+                                 '<extra></extra>',
+                    customdata=daily_summary["balance_formatted"]
                 ))
                 
                 fig.update_layout(
@@ -308,9 +317,9 @@ if df is not None and not df.empty:
                     # Format the transactions for better display
                     display_df = day_transactions[["date", "owner", "bank", "description", "debit", "credit", "balance"]].copy()
                     display_df["date"] = display_df["date"].dt.strftime("%H:%M")
-                    display_df["debit"] = display_df["debit"].apply(lambda x: f"₹{x:,.2f}" if x > 0 else "")
-                    display_df["credit"] = display_df["credit"].apply(lambda x: f"₹{x:,.2f}" if x > 0 else "")
-                    display_df["balance"] = display_df["balance"].apply(lambda x: f"₹{x:,.2f}")
+                    display_df["debit"] = display_df["debit"].apply(lambda x: format_indian_currency(x) if x > 0 else "")
+                    display_df["credit"] = display_df["credit"].apply(lambda x: format_indian_currency(x) if x > 0 else "")
+                    display_df["balance"] = display_df["balance"].apply(lambda x: format_indian_currency(x))
                     
                     st.dataframe(
                         display_df,
@@ -324,9 +333,9 @@ if df is not None and not df.empty:
                         "debit": "sum"
                     })
                     
-                    st.metric("Credits", f"₹{day_summary['credit']:,.2f}")
-                    st.metric("Debits", f"₹{day_summary['debit']:,.2f}")
-                    st.metric("Net Change", f"₹{day_summary['credit'] - day_summary['debit']:,.2f}")
+                    st.metric("Credits", format_indian_currency(day_summary['credit']))
+                    st.metric("Debits", format_indian_currency(day_summary['debit']))
+                    st.metric("Net Change", format_indian_currency(day_summary['credit'] - day_summary['debit']))
             else:
                 st.info(f"No transactions found for {selected_date}")
 
@@ -341,7 +350,7 @@ if df is not None and not df.empty:
             
             # Format transfers for display
             transfers_display = transfers.copy()
-            transfers_display["amount"] = transfers_display["amount"].apply(lambda x: f"₹{x:,.2f}")
+            transfers_display["amount"] = transfers_display["amount"].apply(lambda x: format_indian_currency(x))
             transfers_display["date"] = safe_format_date(transfers_display["date"])
             
             st.dataframe(transfers_display, width='stretch', hide_index=True)
@@ -388,7 +397,7 @@ if df is not None and not df.empty:
             with col1:
                 st.write("**Current Account Balances**")
                 balance_display = account_balances.copy()
-                balance_display["balance"] = balance_display["balance"].apply(lambda x: f"₹{x:,.2f}")
+                balance_display["balance"] = balance_display["balance"].apply(lambda x: format_indian_currency(x))
                 balance_display["date"] = safe_format_date(balance_display["date"])
                 st.dataframe(balance_display, width='stretch', hide_index=True)
             
@@ -418,15 +427,14 @@ if df is not None and not df.empty:
             account_summary["Net Flow"] = account_summary["Total Credits"] - account_summary["Total Debits"]
             
             # Format for display
+            account_display = account_summary.copy()
             for col in ["Total Credits", "Total Debits", "Latest Balance", "Net Flow"]:
-                account_summary[col] = account_summary[col].apply(lambda x: f"₹{x:,.2f}")
+                account_display[col] = account_summary[col].apply(lambda x: format_indian_currency(x))
             
-            account_summary["First Transaction"] = safe_format_date(account_summary["First Transaction"])
-            account_summary["Last Transaction"] = safe_format_date(account_summary["Last Transaction"])
+            account_display["First Transaction"] = safe_format_date(account_summary["First Transaction"])
+            account_display["Last Transaction"] = safe_format_date(account_summary["Last Transaction"])
             
-                        st.dataframe(account_summary, width='stretch')
-
-    # Tab 4: Data Quality
+            st.dataframe(account_display, width='stretch')    # Tab 4: Data Quality
     with tab4:
         st.subheader("📋 Data Quality & Integrity")
         
@@ -445,16 +453,16 @@ if df is not None and not df.empty:
         
         with col2:
             st.write("**Database Statistics**")
-            st.metric("Total Transactions", len(df))
+            st.metric("Total Transactions", format_indian_number(len(df)))
             st.metric("Date Range", f"{df['date'].min().strftime('%d-%m-%Y')} to {df['date'].max().strftime('%d-%m-%Y')}")
-            st.metric("Unique Accounts", len(df[['owner', 'bank']].drop_duplicates()))
+            st.metric("Unique Accounts", format_indian_number(len(df[['owner', 'bank']].drop_duplicates())))
         
         # Show sweep adjustments
         sweep_adjustments = get_sweep_balance_adjustments()
         if sweep_adjustments is not None and not sweep_adjustments.empty:
             st.write("**Active Sweep Balance Adjustments**")
             sweep_display = sweep_adjustments.copy()
-            sweep_display["amount"] = sweep_display["amount"].apply(lambda x: f"₹{x:,.2f}")
+            sweep_display["amount"] = sweep_display["amount"].apply(lambda x: format_indian_currency(x))
             st.dataframe(sweep_display, width='stretch', hide_index=True)
         
         # Raw data view
